@@ -1,0 +1,418 @@
+---
+title: "Forecasting Carbon Market Prices - Processing and Exploratory Analysis"
+author: "Robin Bartmann"
+date: "03/05/2021"
+output: pdf_document
+---
+
+# 0) Setup of Working Environment
+
+```{r,echo=FALSE}
+### Loading libraries
+library(shrinkTVP)
+library(xts)
+library(ggplot2)
+library(corrplot)
+library(forecast)
+library(TSstudio)
+library(MTS)
+library(dynlm)
+library(stargazer)
+library(tseries)
+library(ggfortify)
+library(lubridate)
+library(sjPlot)
+
+source("functions-correlogram.R")
+
+### Start
+setwd("C:/Users/User/Desktop/Bachelor Thesis/RCode")
+```
+
+# 1) Loading the EU ETS Emission Allowance Price Time Series and the Commodities Price Time Series
+
+
+```{r}
+# Loading EUA data Spot price
+EU_allowances_data<-read.csv("EUA Allowance Prices 2013-2021.csv")
+# Loading EUA data Future price
+EU_allowances_futures_data<-read.csv("EUA Future Allowance Prices 2013-2021.csv")
+
+# Cleaning EUA data Spot & FUture Prices
+EU_allowances_data$Mid.Price[EU_allowances_data$Mid.Price == 0] = NA
+EU_allowances_data_cleaned<-na.approx(EU_allowances_data$Mid.Price)
+EU_allowances_futures_data$Last.Price[EU_allowances_futures_data$Last.Price==0] = NA
+EU_allowances_futures_data_cleaned<-na.approx(EU_allowances_futures_data$Last.Price)
+
+
+# Loading commodities data - oil, gas, electricity, coal
+
+oil_data<-read.csv("Daily Brent Oil price in EUR per barrel 2012-2021.csv")
+gas_data<-read.csv("Natural Gas.csv")
+electricity_data<-read.csv("Electricity.csv")
+coal_data<-read.csv("Coal.csv")
+
+# Loading Economic Activity data - DAX and Bloomberg Europe 500 Industrial Production Index
+DAX_data<-read.csv("DAX.csv")
+BE500_data<-read.csv("BE500 Industrial Production Index.csv")
+
+#Transferring to xts
+EUA_xts<-xts(EU_allowances_data_cleaned,order.by = as.Date(EU_allowances_data$ï..Date,"%d/%m/%Y"))
+EUA_futures_xts<-xts(EU_allowances_futures_data_cleaned,order.by=as.Date(EU_allowances_futures_data$ï..Date,"%d/%m/%Y"))
+oil_xts<-xts(oil_data$Last.Price,order.by = as.Date(oil_data$ï..Date,"%d/%m/%Y"))
+gas_xts<-xts(gas_data$Mid.Price,order.by = as.Date(gas_data$ï..Date,"%d/%m/%Y"))
+electricity_xts<-xts(electricity_data$Mid.Price,order.by = as.Date(electricity_data$ï..Date,"%d/%m/%Y"))
+coal_xts<-xts(coal_data$Last.Price,order.by = as.Date(coal_data$ï..Date,"%d/%m/%Y"))
+
+DAX_xts<-xts(DAX_data$Last.Price,order.by = as.Date(DAX_data$Date,"%d/%m/%Y"))
+BE500_xts<-xts(BE500_data$Last.Price,order.by = as.Date(BE500_data$ï..Date,"%d/%m/%Y"))
+```
+
+# 2) Visualizing the time series to inspect the data for the relevant time frame of January 2013 - December 2020
+
+```{r}
+Commodities_EUA<-cbind(EUA_xts,EUA_futures_xts,oil_xts,gas_xts,electricity_xts,coal_xts,DAX_xts,BE500_xts)
+
+Commodities_EUA_13_20<-Commodities_EUA["2013/2020"]
+summary(Commodities_EUA_13_20)
+plot(Commodities_EUA_13_20)
+```
+
+```{r}
+# Beautiful visualization
+Comm_visualize<-na.omit(Commodities_EUA_Temp_NA_cleaned)
+index_all<-index(Comm_visualize)
+index_all<-as.Date(index_all,origin="2013-01-01")
+ggplot(Comm_visualize, aes(x=index_all))+ scale_y_continuous(n.breaks=20) + scale_x_date(date_breaks = "1 year") + theme_bw() + ylab("Value of Time Series") + xlab("Date") + labs(color="Legend") + geom_line(aes(y=electricity_xts,color="Electricity")) + geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("Final_Comm_EUA_Temp_visualized.png",width = 8, height = 4)
+
+```
+
+```{r}
+#Plotting descriptive statistics table
+summary(Comm_visualize)
+descriptive_stats<-describe(Comm_visualize[,c(1,3:6,8,9)])
+descriptive_stats
+write.table(descriptive_stats,file="try.txt",sep=",",quote = FALSE)
+
+relevant_data<-as.data.frame(as.ts(Comm_visualize[,c(1,3:6,8,9)]))
+
+sjtab(relevant_data)
+
+```
+
+
+# 3) NA Handling 
+
+```{r}
+
+# After inspecting the data we observe NA's on weekends 
+# Interpolate is the right method to use
+# For NA's missing, we either use last value carry forward or if the first day is missing, we copy the first day with data
+Commodities_EUA_13_20_na_approx<-na.approx(Commodities_EUA_13_20)
+summary(Commodities_EUA_13_20_na_approx)
+
+#electricity is missing data since October
+#Rest has 1-2 at beginning or end
+Commodities_EUA_13_20_na_handeled<-na.locf(Commodities_EUA_13_20_na_approx)
+summary(Commodities_EUA_13_20_na_handeled)
+
+# first value missing - using 2nd day
+NA_cleaned<-Commodities_EUA_13_20_na_handeled["2013-01-02/2020"]
+summary(NA_cleaned)
+#NA cleaning done
+```
+
+# 4) Transforming to weekly data - was done but significant
+
+Given that economic activity was found to be significant in the literature, the data was converted to weekly as economic activity was only available weekly.
+After performing the below analysis and modelling, it was clear that the weekly economic activity index of Germany is not significant over the phase 3 of the EU ETS.
+Therefore it was removed from the modelling and daily data was used instead. The code lines for transforming and importing weekly economic activity were kept in comments, for others to reproduce the results / use it in other ways. 
+
+```{r}
+#Commodities_EUA_weekly<-apply.weekly(NA_cleaned,mean)
+```
+
+# 5) Loading Temperature data
+
+```{r}
+# Economic Activity
+#Economic_Activity<-read.csv("WEA_Germany.csv")
+#Economic_Activity_xts<-xts(Economic_Activity$Column2,order.by = as.Date(Economic_Activity$Column1,format="%d/%m/%Y"))
+# Economic_Activity_13_20<-Economic_Activity_xts["2013/2020"]
+#already weekly but as an index value - change to similar scale necessary
+
+
+
+#Temperature
+load("Final_Temp.Rdata")
+
+Temperature_xts<-Final_Temp_full_dates["2013/2020"]
+Temperature_xts<-Temperature_xts[,"mean"]
+names(Temperature_xts) <- "Temp_xts"  
+#already weekly - cleaned in seperate file 
+```
+
+# 6) Adding Temperature to the Commodities & EUA
+
+```{r}
+Commodities_EUA_Temp<-cbind(NA_cleaned,Temperature_xts)
+summary(Commodities_EUA_Temp)
+
+# New NA's introduced due to small time availablity differences in Temperature data
+# For temperature 34 weeks in 2020 missing because of data availability - given the recurring pattern over the years, same 34 weeks of 2019 are imputed in the "Cleaning Temperature Data File" 
+
+Commodities_EUA_Temp_NA_cleaned<-na.approx(Commodities_EUA_Temp)
+
+# first value missing - using 2nd day
+Commodities_EUA_Temp_NA_cleaned<-Commodities_EUA_Temp_NA_cleaned["2013-01-02/2020"]
+
+summary(Commodities_EUA_Temp_NA_cleaned)
+
+plot(Commodities_EUA_Temp_NA_cleaned, legend.loc = "topright")
+```
+
+# 7) Investigate Trend and Seasonality of the EU ETS Emission Allowance Price Time Series
+
+```{r}
+#Transform to Time Series to work with various plot options
+TS_EUA_data<-xts_to_ts(Commodities_EUA_Temp_NA_cleaned$EUA_xts)
+TS_EUA_futures_data<-xts_to_ts(Commodities_EUA_Temp_NA_cleaned$EUA_futures_xts)
+
+
+# Trend analysis
+ggplot(TS_EUA_data,aes(x=index_all))+ geom_line(aes(y=TS_EUA_data, color = "EUA Spot"),size=0.8)+theme_bw()+geom_line(aes(y=TS_EUA_futures_data,color="EUA Futures"),size=0.5)+labs(color="Legend")
+
+ggsave("EUA_spot_futures.png",width = 8, height = 4)
+```
+
+## Interpretation:
+
+- There is a clear Trend visible. Therefore transformations are necessary to remove the trend and investigate further.
+
+```{r}
+# Taking differences 
+TS_EUA_data_first_diff<-diff(TS_EUA_data)
+autoplot(TS_EUA_data_first_diff)
+TS_EUA_futures_data_first_diff<-diff(TS_EUA_futures_data)
+autoplot(TS_EUA_futures_data_first_diff)
+
+```
+
+## Interpretation:
+
+- The trend clearly got removed with first-differences
+- We can observe volatility clustering from 2019 onwards with a huge drop in Februrary 2020
+- Now we will investigate Seasonality
+
+```{r}
+# Seasonal analysis
+
+ggseasonplot(TS_EUA_data) +
+  ggtitle("Seasonal Plot: Daily EUA Emissions Allowance Price") +
+  ylab("Price of EUA Emissions Allowance [€]")
+
+ggseasonplot(TS_EUA_data_first_diff) +
+  ggtitle("Seasonal Plot: Change in Daily EUA Emissions Allowance Price") +
+  ylab("Price of EUA Emissions Allowance [€]")
+
+ggsubseriesplot(TS_EUA_data_first_diff)
+```
+
+## Interpretation:
+
+- There is no regular seasonality observable in the untransformed time series (just for interest)
+- There is no seasonailty observable in the first difference transformation.
+
+As next step the autocorrelation, partial autocorrelations and cross correlations are observed.
+
+8) Auto-, Partial-Auto- and Cross-Correlations across different time series and lags
+```{r}
+#Transform the time series
+Log_transform<-log(Commodities_EUA_Temp_NA_cleaned)
+First_difference_transform<-diff(Commodities_EUA_Temp_NA_cleaned)[-1]
+Full_transform<-diff(log(Commodities_EUA_Temp_NA_cleaned))[-1]
+plot(Commodities_EUA_Temp_NA_cleaned)
+plot(Log_transform)
+plot(First_difference_transform)
+plot(Full_transform)
+
+Full_Table<-Full_transform
+
+autoplot(Full_Table)
+
+# If desired: Add Economic Activity (already as an index so log-transform not possible)
+# Economic_Activity_scaled<-Economic_Activity_13_20/100
+# plot(Economic_Activity_scaled)
+
+
+#Full Table with all variables
+#Full_Table<-cbind(Full_transform,Economic_Activity_scaled)
+#autoplot(Full_Table)
+```
+```{r}
+# Visualize beautifully
+index_all<-index(Full_transform)
+ggplot(Full_transform, aes(x=index_all))+ scale_y_continuous(n.breaks=20) + scale_x_date(date_breaks = "1 year") + theme_bw() + ylab("Value of Transformed Time Series") + xlab("Date") + labs(color="Legend") +  geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) +geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("Final_Transformed_Comm_EUA_Temp_visualized.png",width = 8, height = 4)
+
+```
+
+```{r}
+#Investigate EUA_xts Spot prices
+par(mfrow=c(2,1))
+#Untransformed
+#acf(Commodities_EUA_Temp_NA_cleaned$EUA_xts)
+#pacf(Commodities_EUA_Temp_NA_cleaned$EUA_xts)
+
+Full_Table<-na.omit(Full_Table)
+#Transformed
+acf(Full_Table$EUA_xts)
+pacf(Full_Table$EUA_xts)
+
+#Saving it 
+bmp(file="ACF_PACF EUA time series.bmp",
+width=10, height=6, units="in", res=100)
+par(mfrow=c(2,1))
+#Untransformed
+#acf(Commodities_EUA_Temp_NA_cleaned$EUA_xts)
+#pacf(Commodities_EUA_Temp_NA_cleaned$EUA_xts)
+
+Full_Table<-na.omit(Full_Table)
+#Transformed
+acf(Full_Table$EUA_xts)
+pacf(Full_Table$EUA_xts)
+dev.off()
+```
+```{r}
+#Investigate EUA_xts Future prices
+par(mfrow=c(2,2))
+#Untransformed
+acf(Commodities_EUA_Temp_NA_cleaned$EUA_futures_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$EUA_futures_xts)
+
+#Transformed
+acf(Full_Table$EUA_futures_xts)
+pacf(Full_Table$EUA_futures_xts)
+```
+
+
+```{r}
+# Investigate Oil_xts
+par(mfrow=c(2,2))
+acf(Commodities_EUA_Temp_NA_cleaned$oil_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$oil_xts)
+acf(Full_Table$oil_xts)
+pacf(Full_Table$oil_xts)
+```
+```{r}
+# Investigate gas_xts
+par(mfrow=c(2,2))
+acf(Commodities_EUA_Temp_NA_cleaned$gas_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$gas_xts)
+acf(Full_Table$gas_xts)
+pacf(Full_Table$gas_xts)
+```
+```{r}
+# Investigate electricity_xts
+par(mfrow=c(2,2))
+acf(Commodities_EUA_Temp_NA_cleaned$electricity_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$electricity_xts)
+acf(Full_Table$electricity_xts)
+pacf(Full_Table$electricity_xts)
+```
+```{r}
+# Investigate coal_xts
+par(mfrow=c(2,2))
+acf(Commodities_EUA_Temp_NA_cleaned$coal_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$coal_xts)
+acf(Full_Table$coal_xts)
+pacf(Full_Table$coal_xts)
+```
+```{r}
+# Investigate Temp_xts
+par(mfrow=c(2,2))
+acf(Commodities_EUA_Temp_NA_cleaned$Temp_xts)
+pacf(Commodities_EUA_Temp_NA_cleaned$Temp_xts)
+acf(Full_Table$Temp_xts)
+pacf(Full_Table$Temp_xts)
+```
+```{r}
+# If desired: investigate Economic Activity (already as an index so log-transform not possible)
+
+# Investigate Economic Activity
+# NA omit because Econmic Activity does not have most up to date data yet _ UPDATE
+
+#par(mfrow=c(2,2))
+#acf(Commodities_EUA_Temp_NA_cleaned$Temp_xts)
+#pacf(Commodities_EUA_Temp_NA_cleaned$Temp_xts)
+#Full_Table_NA_cleaned<-na.omit(Full_Table)
+#acf(Full_Table_NA_cleaned$Economic_Activity_scaled)
+#pacf(Full_Table_NA_cleaned$Economic_Activity_scaled)
+#par(mar=c(1,1,1,1))
+```
+
+## Collective Analysis of price driving variables
+
+### Commodities
+
+- Significant Autocorrelation in every commodity time series
+- Partial Autocorrelation often significant at lag 1
+- All could potentially best be modeled with an AR(1) or AR(2) process
+
+### Temperature & Economic Activity 
+
+- Given the seasonality, autocorrelation and partial autocorrelation show an irritating pattern
+- Partial Autocorrelation often significant at lag 1
+
+```{r}
+# Investigate Overall Auto- and Cross-Correlations
+# Use pre-written functions, sourced under functions-correlogram
+acf(Full_Table[,c(1,3:7)])
+pacf(Full_Table[,c(1,3:7)])
+```
+
+### Analysis of Cross-Correlation:
+
+- Partly Significant Cross-Correlation between EUA and gas as well as EUA and oil
+- Partly significant between Cross-Correlation of Electricity and EUA
+- Indication that the price drivers observed in the literature are not as relevant in the entire phase 3 of the EU ETS
+
+\pagebreak
+
+# 8) Correlation Matrix
+
+```{r, results = "hide", message = FALSE}
+source("http://www.sthda.com/upload/rquery_cormat.r")
+
+# Correlation Matrix for untransformed Time Series
+png(filename="Correlation Matrix untransformed.png", width=600, height=350)
+rquery.cormat(cbind(Commodities_EUA_Temp_NA_cleaned[,c(1,3:9)]))
+dev.off()
+```
+
+\pagebreak
+
+```{r,results = "hide", message = FALSE}
+# Correlation Matrix for Transformed Time Series 
+png(filename="Correlation Matrix.png", width=600, height=350)
+rquery.cormat(Full_Table[,c(1,3:9)])
+dev.off()
+```
+
+## Interpretation
+
+- In the untransformed time series there is a clear negative correlation in the  between EUA price and oil and gas prices. A slight positive correlation can be observed between eletricity prices and EUA price
+- In the transformed time series, there is almost no correlation observable between all variables, except electricity and temperature as well as coal and EUA and EUA futures. This - together with the low cross-correlation inspected above - already indicates that the variables that were significant for EU ETS prices before (Commodities, Temperature, Economic Activity) are not as relevant for the entire Phase 3 of the EU ETS. Rather other, unobserved price drivers play a larger role. 
+
+```{r}
+# Saving the Data
+#Full_Table_finished_phase3 <- Full_Table["2013/2020"]
+save(Full_Table,file="final_spot_data_xtsformat.rda")
+#Full_Table_TS_finished_phase3 <- as.ts(Full_Table_finished_phase3) 
+Full_Table_TS<-as.ts(Full_Table)
+save(Full_Table_TS,file="final_spot_data_TSformat.rda")
+# Done
+```

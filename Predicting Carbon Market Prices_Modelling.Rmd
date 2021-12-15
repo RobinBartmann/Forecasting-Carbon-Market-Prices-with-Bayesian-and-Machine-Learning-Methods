@@ -1,0 +1,871 @@
+---
+title: "Forecasting Carbon Market Prices - Modelling and Forecasting"
+author: "Robin Bartmann"
+date: "03/05/2021"
+output: pdf_document
+---
+
+# 0) Setup of Working Environment
+
+```{r,echo=FALSE}
+### Loading libraries
+library(shrinkTVP)
+library(xts)
+library(ggplot2)
+library(corrplot)
+library(forecast)
+library(TSstudio)
+library(MTS)
+library(dynlm)
+library(stargazer)
+library(tseries)
+library(psych)
+library(sjPlot)
+
+
+### Start
+setwd("C:/Users/User/Desktop/Bachelor Thesis/RCode")
+```
+
+```{r}
+# Loading the data
+load(file="final_spot_data_xtsformat.rda")
+
+#TS format just if necessary for future applications
+load(file="final_spot_data_TSformat.rda")
+
+```
+
+```{r}
+# Transform to weekly and monthly for future use / to decrease computation time
+weekly_Full_Table<-apply.weekly(Full_Table,mean)
+monthly_Full_Table<-apply.monthly(Full_Table,mean)
+```
+
+```{r}
+#Plotting the time series on a weekly basis
+plot(weekly_Full_Table,legend.loc = "topright")
+```
+
+
+
+
+# 1) Modelling with Linear Regression
+
+
+```{r}
+lm_model_spot<-lm(EUA_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts + Temp_xts +BE500_xts,Full_Table)
+summary(lm_model_spot)
+```
+
+```{r}
+# Code for exporting lm results
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+
+lm_results_table<-tab_model(lm_model_spot)
+lm_results_table
+
+summary(full_model)
+
+```
+
+```{r}
+#Modelling of futures possible as well
+
+#lm_model_futures<-lm(EUA_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts + Temp_xts + DAX_xts + BE500_xts,weekly_Full_Table)
+#summary(lm_model_futures)
+```
+
+## Interpretation
+
+- The basic linear regression with all price drivers already indicate that except coal, the conventional price drivers as pointed out in the literature are not as relevant in the phase 3 of the EU ETS - both in EUA spot and future prices. Further interpretation is given after modelling wit a shrinkage time varying parameter model - shrink TVP.
+
+# Modelling with shrinkTVP results
+
+```{r}
+# Modellling with Spot Carbon Prices
+Full_Table_shrinkTVP<-na.approx(Full_Table)
+full_model<-shrinkTVP(EUA_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts +Temp_xts + BE500_xts,Full_Table_shrinkTVP, sv=TRUE, learn_a_xi = FALSE, learn_kappa2_B = FALSE,a_xi =0.1 ,kappa2_B = 10)
+summary(full_model)
+plot(full_model)
+
+```
+
+```{r}
+# Modellling with Future Carbon Prices
+#full_model_futures<-shrinkTVP(EUA_futures_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts + Temp_xts + Economic_Activity_scaled,Full_Table_finished_phase3)
+#plot(full_model_futures)
+#summary(full_model_futures)
+```
+
+```{r}
+# Test for modelling monthly to check if different results come up 
+#Full_table_finished_monthly<-apply.monthly(Full_Table_finished,mean)
+#full_model_monthly<-shrinkTVP(EUA_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts + Temp_xts + Economic_Activity_first_diff,Full_Table_finished)
+#plot(full_model_monthly)
+#summary(full_model_monthly)
+# No special results, similar to weekly
+```
+
+```{r}
+# Test for modelling various time windows to check if different results come up at specific phases of phase 3 
+#Full_Table_finished_window<-Full_Table_finished_phase3["2013/2016"]
+#full_model_window<-shrinkTVP(EUA_xts ~ oil_xts + gas_xts + electricity_xts + coal_xts + Temp_xts + Economic_Activity_scaled,Full_Table_finished_window)
+#plot(full_model_window)
+#summary(full_model_window)
+# No special results
+```
+
+## Interpretation
+
+- As expected in the Exploratory Analysis (low cross-correlation and overall correlation) the conventional price drivers as listed in the literature (Commodities, Temperature and Economic Activity) have almost no signal in the phase 3 of the EU ETS. The only relevant seems to be coal and shortly oil in the Future time series. This already hints at the relveance of institutional changes in the artifical EU ETS market. In phase 3 of the EU ETS, the carbon price seems to move less and less dependent on energy prices, economic activity and temperature. 
+
+- Both, transforming to monthly data and looking at specific windows of the dataset, the choosen variables are not significant in the ShrinkTVP modelling. This is in line with the limited cross-correlation observable in the Exploratory Analysis.
+
+- There is no significant difference between spot prices and future prices over the observed time horizon with quarterly futures. This indicates that the EUA spot price is more stable than in previous EU ETS phases, as the literature often used future prices because of less noise in the data. 
+
+
+\pagebreak
+
+
+## Forecasting with Linear Regression
+
+```{r}
+# Forecasting Models to compare
+
+# Linear Regression as Baseline
+## included lags
+# shrinkTVP with stochastic volatility modelling
+## included lags
+# shrinkTVP without stochastic volatility modelling
+# LSTM
+
+# Forecasting methods to compare - rolling windows
+
+# 1 step ahead forecast - weekly
+# 4 step ahead forecast - monthly
+
+
+# Load necessary forecasting librariers
+library(forecast)
+library(tseries)
+library(readr)
+library(ggplot2)
+library(TTR)
+```
+
+```{r}
+# Deactivated dplyr because of package problems
+
+#Convertion to weekly to perform Forecasting, stayed at Full_Table naming for easier code readability but it is weekly data
+
+Full_Table<-weekly_Full_Table
+
+
+#Construct ideal LM Model to forecast
+
+# Save lags separately
+# Commodities
+Full_Table$EUA_xts_l1 <- lag(Full_Table$EUA_xts, 1)
+Full_Table$EUA_xts_l2 <- lag(Full_Table$EUA_xts, 2) 
+Full_Table$EUA_xts_l3 <- lag(Full_Table$EUA_xts, 3) 
+Full_Table$EUA_xts_l4 <- lag(Full_Table$EUA_xts, 4) 
+Full_Table$EUA_futures_xts_l1 <- lag(Full_Table$EUA_futures_xts, 1)
+Full_Table$EUA_futures_xts_l2 <- lag(Full_Table$EUA_futures_xts, 2) 
+Full_Table$EUA_futures_xts_l3 <- lag(Full_Table$EUA_futures_xts, 3) 
+Full_Table$EUA_futures_xts_l4 <- lag(Full_Table$EUA_futures_xts, 4) 
+Full_Table$oil_xts_l1 <- lag(Full_Table$oil_xts, 1) 
+Full_Table$oil_xts_l2 <- lag(Full_Table$oil_xts, 2) 
+Full_Table$oil_xts_l3 <- lag(Full_Table$oil_xts, 3) 
+Full_Table$oil_xts_l4 <- lag(Full_Table$oil_xts, 4) 
+Full_Table$gas_xts_l1 <- lag(Full_Table$gas_xts, 1) 
+Full_Table$gas_xts_l2 <- lag(Full_Table$gas_xts, 2) 
+Full_Table$gas_xts_l3 <- lag(Full_Table$gas_xts, 3) 
+Full_Table$gas_xts_l4 <- lag(Full_Table$gas_xts, 4) 
+Full_Table$coal_xts_l1 <- lag(Full_Table$coal_xts, 1) 
+Full_Table$coal_xts_l2 <- lag(Full_Table$coal_xts, 2) 
+Full_Table$coal_xts_l3 <- lag(Full_Table$coal_xts, 3) 
+Full_Table$coal_xts_l4 <- lag(Full_Table$coal_xts, 4) 
+Full_Table$electricity_xts_l1<-lag(Full_Table$electricity_xts, 1)
+Full_Table$electricity_xts_l2<-lag(Full_Table$electricity_xts, 2)
+Full_Table$electricity_xts_l3<-lag(Full_Table$electricity_xts, 3)
+Full_Table$electricity_xts_l4<-lag(Full_Table$electricity_xts, 4)
+#Temperature
+Full_Table$Temp_xts_l1 <- lag(Full_Table$Temp_xts, 1) 
+Full_Table$Temp_xts_l2 <- lag(Full_Table$Temp_xts, 2) 
+Full_Table$Temp_xts_l3 <- lag(Full_Table$Temp_xts, 3) 
+Full_Table$Temp_xts_l4 <- lag(Full_Table$Temp_xts, 4) 
+# Proxies for Economic Acitivity
+Full_Table$BE500_xts_l1<-lag(Full_Table$BE500_xts, 1)
+Full_Table$BE500_xts_l2<-lag(Full_Table$BE500_xts, 2)
+Full_Table$BE500_xts_l3<-lag(Full_Table$BE500_xts, 3)
+Full_Table$BE500_xts_l4<-lag(Full_Table$BE500_xts, 4)
+Full_Table$DAX_xts_l1<-lag(Full_Table$DAX_xts, 1)
+Full_Table$DAX_xts_l2<-lag(Full_Table$DAX_xts, 2)
+Full_Table$DAX_xts_l3<-lag(Full_Table$DAX_xts, 3)
+Full_Table$DAX_xts_l4<-lag(Full_Table$DAX_xts, 4)
+
+
+
+# If Economic Activity is desired:
+#Full_Table$EA_xts_l1 <- lag(Full_Table$Economic_Activity_scaled, 1) 
+#Full_Table$EA_xts_l2 <- lag(Full_Table$Economic_Activity_scaled, 2)
+#Full_Table$EA_xts_l3 <- lag(Full_Table$Economic_Activity_scaled, 3) 
+#Full_Table$EA_xts_l4 <- lag(Full_Table$Economic_Activity_scaled, 4) 
+
+
+form_EUA_spot <- "EUA_xts ~ EUA_xts_l1+EUA_xts_l2+EUA_xts_l3+EUA_xts_l4+  + oil_xts_l1+oil_xts_l2+oil_xts_l3+oil_xts_l4 + gas_xts_l1 + gas_xts_l2 + gas_xts_l3 + gas_xts_l4 + electricity_xts_l1 + electricity_xts_l2 + electricity_xts_l3 + electricity_xts_l4 + coal_xts_l1 +coal_xts_l2 + coal_xts_l3 + coal_xts_l4 + Temp_xts_l1 + Temp_xts_l2 + Temp_xts_l3 + Temp_xts_l4+BE500_xts_l1+BE500_xts_l2+BE500_xts_l3+BE500_xts_l4+DAX_xts_l1+DAX_xts_l2+DAX_xts_l3+DAX_xts_l4"
+
+# If EUA_futures is desired
+
+#form_EUA_futures <- "EUA_futures_xts ~ EUA_futures_xts_l1+EUA_futures_xts_l2+EUA_futures_xts_l3+EUA_futures_xts_l4 + oil_xts_l1+oil_xts_l2+oil_xts_l3+oil_xts_l4 + gas_xts_l1 + gas_xts_l2 + gas_xts_l3 + gas_xts_l4 + electricity_xts_l1 + electricity_xts_l2 + electricity_xts_l3 + electricity_xts_l4 + coal_xts_l1 +coal_xts_l2 + coal_xts_l3 + coal_xts_l4 + Temp_xts_l1 + Temp_xts_l2 + Temp_xts_l3 + Temp_xts_l4"
+```
+
+```{r}
+## Creating Training and Test Data
+# Introduced new column
+
+Full_Table$Class <- 0
+Full_Table$Class["2019/2020"] = 1 # last two years for testing set
+table(Full_Table$Class)
+
+EUA_test_data <- Full_Table$EUA_xts["2019/2020"]
+EUA_train_data <- Full_Table$EUA_xts["2013/2018"]
+
+Train_data <- subset(Full_Table, Class == 0)
+Test_data <- subset(Full_Table, Class == 1)
+Train_data_NA_cleaned<-na.omit(Train_data) # because of NA's introduced through lags in the first 4 weeks
+
+```
+
+```{r}
+# Final LM Models with all lags and covariates daily
+
+Final_lm_model_spot <- lm(form_EUA_spot, data = Train_data_NA_cleaned)
+summary(Final_lm_model_spot) 
+Final_lm_model_spot_done <- step(Final_lm_model_spot) 
+summary(Final_lm_model_spot_done)
+?step
+# Final Model form distilled from  summary - found the most relevant lags to include in the model
+# Final Model with lag 1 of each covariate and additional relevant covariates
+
+final_model_form <- "EUA_xts ~ EUA_xts_l1 + EUA_xts_l3 + oil_xts_l1 + gas_xts_l1 + gas_xts_l4 + electricity_xts_l1 + coal_xts_l1 + coal_xts_l4 + Temp_xts_l1 + BE500_xts_l1"
+
+
+#Final_lm_model_futures <- lm(form_EUA_futures, data = Train_data_NA_cleaned)
+#summary(Final_lm_model_futures) 
+#Final_lm_model_futures_done <- step(Final_lm_model_futures) 
+#summary(Final_lm_model_futures_done)
+```
+
+```{r}
+# Final LM Model for comparison - only 10 covariates, including lags of every covariate and the dependent variable
+LM_Model<-lm(final_model_form,data=Train_data_NA_cleaned)
+summary(LM_Model)
+```
+
+```{r}
+# Final shrinkTVP Model for comparison - only 10 covariates, including lags of every covariate and the dependent variable
+shrinkTVP_model<-shrinkTVP(as.formula(final_model_form),Train_data_NA_cleaned)
+summary(shrinkTVP_model)
+plot(shrinkTVP_model)
+```
+
+
+
+```{r}
+# Forecasting with the LM Model
+
+# One step ahead, shifting window forecast with re-estimation
+
+new_i_lm<-LM_Model
+new_train_i<-Train_data_NA_cleaned
+prediction_results<-c()
+forecast_time<-105
+i<-1
+
+
+for (i in 1:forecast_time){
+  prediction_lm_i_week<-predict.lm(new_i_lm,newdata = Test_data[i,])
+  prediction_results<-rbind(prediction_results,prediction_lm_i_week)
+  new_train_i<-rbind(new_train_i[-c(1)],Test_data[i])
+  new_i_lm<-lm(form_EUA_spot,new_train_i)
+  print(i)
+}
+
+
+forecast_results_LM1step<-xts(prediction_results, order.by=index(Full_Table["2019/2020"]))
+
+
+# 4 step ahead, shifting window forecast with re-estimation
+
+new_i_lm<-LM_Model
+new_train_4i<-Train_data_NA_cleaned
+forecast_time<-105/4 # 704 because of less available data for a 4 step forecast
+prediction_results4step<-vector()
+i<-1
+helper_matrix<-matrix(data = seq(1,105),ncol = 4,byrow=TRUE)
+
+for (i in 1:forecast_time){
+  prediction_lm_i_week<-as.vector(predict.lm(new_i_lm,newdata = Test_data[helper_matrix[i,],]))
+  prediction_results4step<-rbind(matrix(prediction_results4step),matrix(prediction_lm_i_week))
+  new_train_4i<-rbind(new_train_4i[-c(1:4)],Test_data[helper_matrix[i,],])
+  new_i_lm<-lm(form_EUA_spot,new_train_4i)
+  print(i)
+}
+
+
+forecast_results_LM4step<-xts(prediction_results4step, order.by =index(Full_Table["2019/2020-12-29"]))
+
+
+# Forecasting with LM Model done
+```
+
+```{r}
+#DONE ONCE
+save(forecast_results_LM1step, file = "forecast_results_LM1step.rda" )
+save(forecast_results_LM4step, file = "forecast_results_LM4step.rda" )
+```
+
+```{r}
+# Load shrinkTVP1step results
+load("forecast_results_LM1step.rda")
+load("forecast_results_LM4step.rda")
+```
+
+
+
+```{r}
+par(mfrow=c(2,1))
+# Visualize 1 step ahead
+comparison_pred_real_LM_1step<-merge(EUA_test_data,forecast_results_LM1step)
+names(comparison_pred_real_LM_1step)<-c("Reality","LM_Prediction")
+comparison_pred_real_LM_1step$RMSE<-sqrt((comparison_pred_real_LM_1step$Reality-comparison_pred_real_LM_1step$LM_Prediction)^2)
+plot(comparison_pred_real_LM_1step,legend.loc = "bottomright")
+sum(comparison_pred_real_LM_1step$RMSE)
+
+
+# Visualize 4 step ahead
+comparison_pred_real_LM_4step<-merge(EUA_test_data,forecast_results_LM4step)
+names(comparison_pred_real_LM_4step)<-c("Reality","LM Prediction")
+comparison_pred_real_LM_4step$RMSE<-sqrt((comparison_pred_real_LM_4step$Reality-comparison_pred_real_LM_4step$`LM Prediction`)^2)
+comparison_pred_real_LM_4step<-na.omit(comparison_pred_real_LM_4step) # remove last row
+plot(comparison_pred_real_LM_4step,legend.loc = "bottomright")
+sum(comparison_pred_real_LM_4step$RMSE)
+
+```
+
+
+\pagebreak
+
+```{r}
+# Forecasting with the shrinkTVP Model
+
+final_shrinkTVP_model<-shrinkTVP(as.formula(final_model_form),Train_data_NA_cleaned)
+summary(final_shrinkTVP_model)
+plot(final_shrinkTVP_model)
+
+# FINAL SHRINK TVP MODEL DONE
+
+# Inspect MSFE with ShrinkTVP Model without SV
+## mean of 5000 draws of each forecast
+
+#mean_forecast_shrinkTVP<-apply(prediction_shrinkTVP$y_pred,2,mean)
+#comparison_pred_real_shrinkTVP<-merge(real_data_1920,mean_forecast_shrinkTVP)
+#comparison_pred_real_shrinkTVP$Squared_differences<-(comparison_pred_real_shrinkTVP$EUA_xts-comparison_pred_real_shrinkTVP$mean_forecast_shrinkTVP)^2
+#plot(comparison_pred_real_shrinkTVP,legend.loc="bottomright")
+#MSFE_shrinkTVP<-mean(comparison_pred_real_shrinkTVP$Squared_differences)
+#MSFE_shrinkTVP
+```
+
+```{r}
+# One step ahead, shifting window forecast with re-estimation
+
+
+prediction_results_shrinkTVP1step<-c()
+new_i_shrinkTVP<-final_shrinkTVP_model
+new_train_i<-Train_data_NA_cleaned
+forecast_time<-105
+i<-1
+
+for (i in 1:forecast_time){
+  prediction_shrinkTVP_i_week<-forecast_shrinkTVP(new_i_shrinkTVP,newdata = as.data.frame(Test_data[i,]))
+  mean_forecast_shrinkTVP<-apply(prediction_shrinkTVP_i_week$y_pred,2,mean)
+  prediction_results_shrinkTVP1step<-rbind(prediction_results_shrinkTVP1step,mean_forecast_shrinkTVP)
+  new_train_i<-rbind(new_train_i[-c(1)],Test_data[i,])
+  new_i_shrinkTVP<-shrinkTVP(as.formula(final_model_form),new_train_i)
+  print(i)
+}
+
+
+forecast_results_shrinkTVP1step<-xts(prediction_results_shrinkTVP1step, order.by =index(Full_Table["2019/2020"]))
+
+#DONE ONCE
+save(forecast_results_shrinkTVP1step, file = "forecast_results_shrinkTVP1step_finalModel.rda" )
+
+```
+
+
+
+```{r}
+
+# 4 step ahead, rolling window forecast with re-estimation
+
+new_i_shrinkTVP<-final_shrinkTVP_model
+new_train_4i<-Train_data_NA_cleaned
+prediction_results_shrinkTVP4step<-vector()
+forecast_time<-105/4
+i<-1
+helper_matrix<-matrix(data = seq(1,104),ncol = 4,byrow=TRUE)
+
+
+for (i in 1:forecast_time){
+  prediction_shrinkTVP_i_week<-as.vector(forecast_shrinkTVP(new_i_shrinkTVP,newdata = as.data.frame(Test_data[helper_matrix[i,],])))
+  mean_forecast_shrinkTVP<-apply(prediction_shrinkTVP_i_week$y_pred,2,mean)
+  prediction_results_shrinkTVP4step<-rbind(matrix(prediction_results_shrinkTVP4step),matrix(mean_forecast_shrinkTVP))
+  new_train_4i<-rbind(new_train_4i[-c(1:4)],Test_data[helper_matrix[i,],])
+  new_i_shrinkTVP<-shrinkTVP(as.formula(final_model_form),new_train_4i)
+  print(i)
+}
+
+
+forecast_results_shrinkTVP4step<-xts(prediction_results_shrinkTVP4step, order.by =index(Full_Table["2019/2020-12-29"])) # less than whole year to save it, 27 forecasts would be too much
+
+#DONE ONCE
+save(forecast_results_shrinkTVP4step, file = "forecast_results_shrinkTVP4step_finalModel.rda" )
+# Forecasting with shrink TVP Model done
+```
+
+
+```{r}
+# Load shrinkTVP1step results
+# Load shrinkTVP4step results
+
+load("forecast_results_shrinkTVP1step_finalModel.rda")
+load("forecast_results_shrinkTVP4step_finalModel.rda")
+```
+
+
+
+```{r}
+
+par(mfrow=c(2,1))
+# Visualize 1 step ahead
+comparison_pred_real_shrinkTVP_1step<-merge(EUA_test_data,forecast_results_shrinkTVP1step)
+names(comparison_pred_real_shrinkTVP_1step)<-c("Reality","shrinkTVP Prediction")
+comparison_pred_real_shrinkTVP_1step$RMSE<-sqrt((comparison_pred_real_shrinkTVP_1step$Reality-comparison_pred_real_shrinkTVP_1step$`shrinkTVP Prediction`)^2)
+plot(comparison_pred_real_shrinkTVP_1step,legend.loc = "bottomright")
+sum(comparison_pred_real_shrinkTVP_1step$RMSE)
+
+# Visualize 4 step ahead
+comparison_pred_real_shrinkTVP_4step<-merge(EUA_test_data,forecast_results_shrinkTVP4step)
+names(comparison_pred_real_shrinkTVP_4step)<-c("Reality","shrinkTVP Prediction")
+comparison_pred_real_shrinkTVP_4step$RMSE<-sqrt((comparison_pred_real_shrinkTVP_4step$Reality-comparison_pred_real_shrinkTVP_4step$`shrinkTVP Prediction`)^2)
+plot(comparison_pred_real_shrinkTVP_4step,legend.loc = "bottomright")
+comparison_pred_real_shrinkTVP_4step<-na.omit(comparison_pred_real_shrinkTVP_4step)
+sum(comparison_pred_real_shrinkTVP_4step$RMSE)
+```
+
+```{r}
+# Forecasting with the shrinkTVP Model with stochastic volatility
+
+# Parameter tuning / prior specification for shrinkTVP model with SV
+
+# Removing leaning c_xi and c_tau 
+# Testing different a_xi and kappa2_B for less and more shrinkage 
+
+para_tune<-shrinkTVP(as.formula(final_model_form),Train_data_NA_cleaned, sv=TRUE, learn_c_xi = FALSE, learn_c_tau = FALSE, learn_a_xi = FALSE, learn_kappa2_B = FALSE,a_xi =0.1 ,kappa2_B = 10)
+summary(para_tune)
+plot(para_tune)
+
+
+# Checking full period forecast to assesss performance
+full_period_forecast<-forecast_shrinkTVP(para_tune,as.data.frame(Test_data))
+mean_forecast_shrinkTVP<-apply(full_period_forecast$y_pred,2,mean)
+
+par(mfrow=c(2,1))
+# Visualize 1 step ahead
+Full_period_shrinkSV_compare<-merge(EUA_test_data,mean_forecast_shrinkTVP)
+names(Full_period_shrinkSV_compare)<-c("Reality","shrinkTVP Prediction")
+Full_period_shrinkSV_compare$RMSE<-sqrt((Full_period_shrinkSV_compare$Reality-Full_period_shrinkSV_compare$`shrinkTVP Prediction`)^2)
+plot(Full_period_shrinkSV_compare,legend.loc = "bottomright")
+sum(Full_period_shrinkSV_compare$RMSE)
+
+#Parameter tuned to following model specifications:
+
+final_shrinkTVP_model_withSV_paratuned<-shrinkTVP(as.formula(final_model_form),Train_data_NA_cleaned, sv=TRUE, learn_a_xi = FALSE, learn_kappa2_B = FALSE,a_xi =0.1 ,kappa2_B = 100)
+summary(final_shrinkTVP_model_withSV_paratuned)
+plot(final_shrinkTVP_model_withSV_paratuned)
+
+
+
+
+# FINAL SHRINK TVP with SV MODEL DONE
+```
+
+```{r}
+# One step ahead, shifting window forecast with re-estimation
+
+prediction_results_shrinkTVP1stepSV<-c()
+new_i_shrinkTVP<-final_shrinkTVP_model_withSV_paratuned
+new_train_i<-Train_data_NA_cleaned
+forecast_time<-105
+i<-1
+
+for (i in 1:forecast_time){
+  prediction_shrinkTVP_i_week<-forecast_shrinkTVP(new_i_shrinkTVP,newdata = as.data.frame(Test_data[i,]))
+  mean_forecast_shrinkTVP<-apply(prediction_shrinkTVP_i_week$y_pred,2,mean)
+  prediction_results_shrinkTVP1stepSV<-rbind(prediction_results_shrinkTVP1stepSV,mean_forecast_shrinkTVP)
+  new_train_i<-rbind(new_train_i[-c(1)],Test_data[i,])
+  new_i_shrinkTVP<-shrinkTVP(as.formula(final_model_form),new_train_i, sv = TRUE, learn_a_xi = FALSE, learn_kappa2_B = FALSE,a_xi =0.1,kappa2_B = 100)
+  print(i)
+}
+
+
+forecast_results_shrinkTVP1stepSV<-xts(prediction_results_shrinkTVP1stepSV, order.by =index(Full_Table["2019/2020"]))
+
+#DONE ONCE
+save(forecast_results_shrinkTVP1stepSV, file = "forecast_results_shrinkTVP1stepSV_finalModel_para_tuned_3.rda" )
+
+```
+
+```{r}
+
+# 4 step ahead, rolling window forecast with re-estimation
+
+new_i_shrinkTVP<-final_shrinkTVP_model_withSV_paratuned
+new_train_4i<-Train_data_NA_cleaned
+prediction_results_shrinkTVP4stepSV<-vector()
+forecast_time<-105/4
+i<-1
+helper_matrix<-matrix(data = seq(1,104),ncol = 4,byrow=TRUE)
+
+
+for (i in 1:forecast_time){
+  prediction_shrinkTVP_i_week<-as.vector(forecast_shrinkTVP(new_i_shrinkTVP,newdata = as.data.frame(Test_data[helper_matrix[i,],])))
+  mean_forecast_shrinkTVP<-apply(prediction_shrinkTVP_i_week$y_pred,2,mean)
+  prediction_results_shrinkTVP4stepSV<-rbind(matrix(prediction_results_shrinkTVP4stepSV),matrix(mean_forecast_shrinkTVP))
+  new_train_4i<-rbind(new_train_4i[-c(1:4)],Test_data[helper_matrix[i,],])
+  new_i_shrinkTVP<-shrinkTVP(as.formula(final_model_form),new_train_4i, sv = TRUE, learn_a_xi = FALSE, learn_kappa2_B = FALSE,a_xi =0.1,kappa2_B = 100)
+  print(i)
+}
+
+
+forecast_results_shrinkTVP4stepSV<-xts(prediction_results_shrinkTVP4stepSV, order.by =index(Full_Table["2019/2020-12-29"])) # less than whole year to save it, 27 forecasts would be too much
+
+#DONE ONCE
+save(forecast_results_shrinkTVP4stepSV, file = "forecast_results_shrinkTVP4stepSV_finalModel_para_tuned_3.rda" )
+# Forecasting with shrink TVP Model done
+```
+
+```{r}
+# Load shrinkTVPSV1step results
+# Load shrinkTVPSv4step results
+
+load("forecast_results_shrinkTVP1stepSV_finalModel.rda")
+load("forecast_results_shrinkTVP4stepSv_finalModel.rda")
+```
+
+```{r}
+
+par(mfrow=c(2,1))
+# Visualize 1 step ahead
+comparison_pred_real_shrinkTVP_1stepSV<-merge(EUA_test_data,forecast_results_shrinkTVP1stepSV)
+names(comparison_pred_real_shrinkTVP_1stepSV)<-c("Reality","shrinkTVP with SV Prediction")
+comparison_pred_real_shrinkTVP_1stepSV$RMSE<-sqrt((comparison_pred_real_shrinkTVP_1stepSV$Reality-comparison_pred_real_shrinkTVP_1stepSV$`shrinkTVP with SV Prediction`)^2)
+plot(comparison_pred_real_shrinkTVP_1stepSV,legend.loc = "bottomright")
+sum(comparison_pred_real_shrinkTVP_1stepSV$RMSE)
+
+# Visualize 4 step ahead
+comparison_pred_real_shrinkTVP_4stepSV<-merge(EUA_test_data,forecast_results_shrinkTVP4stepSV)
+names(comparison_pred_real_shrinkTVP_4stepSV)<-c("Reality","shrinkTVP with SV Prediction")
+comparison_pred_real_shrinkTVP_4stepSV$RMSE<-sqrt((comparison_pred_real_shrinkTVP_4stepSV$Reality-comparison_pred_real_shrinkTVP_4stepSV$`shrinkTVP with SV Prediction`)^2)
+plot(comparison_pred_real_shrinkTVP_4stepSV,legend.loc = "bottomright")
+comparison_pred_real_shrinkTVP_4stepSV<-na.omit(comparison_pred_real_shrinkTVP_4stepSV)
+sum(comparison_pred_real_shrinkTVP_4stepSV$RMSE)
+```
+
+
+```{r}
+# Forecasting with LSTM Model DONE IN PYTHON
+# Loaded the results from Python
+# Load LSTM results
+Results_LSTM1step<-read_csv("Results_LSTM1step_Final_05082021.csv")
+forecast_results_LSTM1step<-xts(Results_LSTM1step$Predictions,order.by =index(Full_Table["2019/2020-12-20"]))
+Results_LSTM4step<-read_csv("Results_LSTM4step_Final_04082021.csv")
+forecast_results_LSTM4step<-xts(Results_LSTM4step$Predictions,order.by =index(Full_Table["2019/2020-11-29"]))
+```
+
+```{r}
+#Check Accuracy of LSTM results
+Accuracy_LSTM1<-accuracy(as.ts(forecast_results_LSTM1step),EUA_test_data$EUA_xts[1:103])
+Accuracy_LSTM1
+
+Accuracy_LSTM4<-accuracy(as.ts(forecast_results_LSTM4step),EUA_test_data$EUA_xts[1:100])
+Accuracy_LSTM4
+
+par(mfrow=c(2,1))
+# Visualize 1 step ahead
+comparison_pred_real_LSTM_1step<-merge(EUA_test_data,forecast_results_LSTM1step)
+names(comparison_pred_real_LSTM_1step)<-c("Reality","LSTM 1step Prediction")
+comparison_pred_real_LSTM_1step$RMSE<-sqrt((comparison_pred_real_LSTM_1step$Reality-comparison_pred_real_LSTM_1step$`LSTM 1step Prediction`)^2)
+plot(comparison_pred_real_LSTM_1step,legend.loc = "bottomright")
+
+# Visualize 4 step ahead
+comparison_pred_real_LSTM_4step<-merge(EUA_test_data,forecast_results_LSTM4step)
+names(comparison_pred_real_LSTM_4step)<-c("Reality","LSTM 4step Prediction")
+comparison_pred_real_LSTM_4step$RMSE<-sqrt((comparison_pred_real_LSTM_4step$Reality-comparison_pred_real_LSTM_4step$`LSTM 4step Prediction`)^2)
+plot(comparison_pred_real_LSTM_4step,legend.loc = "bottomright")
+
+par(mfrow=c())
+
+```
+
+
+# Evaluate Forecast Performances
+
+```{r}
+# Evaulate Forecast accuracy LM Model
+# 1 step ahead data
+Accuracy_LM1<-accuracy(as.ts(forecast_results_LM1step),EUA_test_data$EUA_xts)
+Accuracy_shrinkTVP1<-accuracy(as.ts(forecast_results_shrinkTVP1step),EUA_test_data$EUA_xts)
+Accuracy_shrinkTVP1SV<-accuracy(as.ts(forecast_results_shrinkTVP1stepSV),EUA_test_data$EUA_xts)
+Accuracy_LSTM1<-accuracy(as.ts(forecast_results_LSTM1step),EUA_test_data$EUA_xts[1:103])#Forecast in python only possible until 20-12-2021
+
+
+# 4 step ahead data
+Accuracy_LM4<-accuracy(as.ts(forecast_results_LM4step),EUA_test_data$EUA_xts[1:104])
+Accuracy_shrinkTVP4<-accuracy(as.ts(forecast_results_shrinkTVP4step),EUA_test_data$EUA_xts[1:104])
+Accuracy_shrinkTVP4SV<-accuracy(as.ts(forecast_results_shrinkTVP4stepSV),EUA_test_data$EUA_xts[1:104])
+Accuracy_LSTM4<-accuracy(as.ts(forecast_results_LSTM4step),EUA_test_data$EUA_xts[1:100])#Forecast loop in pyhton only possible until 29-11-2021
+
+
+```
+
+
+```{r}
+#Cunstruct Final Table for Comparison
+
+# 1 step final Table
+Accuracy_comparison_spot_1step<-rbind(Accuracy_LM1,Accuracy_shrinkTVP1,Accuracy_shrinkTVP1SV,Accuracy_LSTM1)
+row.names(Accuracy_comparison_spot_1step)<-c("Accuracy_LM","Accuracy_shrinkTVP","Accuracy_shrinkTVP with SV","Accuracy_LSTM")
+
+final_matrix_1step<-data.frame(Accuracy_comparison_spot_1step)
+try<-final_matrix_1step[2:3]
+write.table(try,sep=",",quote=FALSE ,file="Level Accuracy Results 1step.txt")
+
+```
+
+
+```{r}
+# 4 step final Table
+Accuracy_comparison_spot_4step<-rbind(Accuracy_LM4,Accuracy_shrinkTVP4,Accuracy_shrinkTVP4SV,Accuracy_LSTM4)
+row.names(Accuracy_comparison_spot_4step)<-c("Accuracy_LM","Accuracy_shrinkTVP","Accuracy_shrinkTVP with SV","Accuracy_LSTM")
+
+final_matrix_4step<-data.frame(Accuracy_comparison_spot_4step)
+try2<-final_matrix_4step[2:3]
+write.table(try2,sep=",",quote=FALSE ,file="Level Accuracy Results 4step.txt")
+
+```
+
+```{r}
+#Perform Final Statistical Tests
+library(rugarch)
+# Statistical tests - Directional Accuracy
+# 1 step
+DAC_LM1<-DACTest(forecast_results_LM1step,EUA_test_data$EUA_xts, test = c("PT"),conf.level = 0.95)
+DAC_shrink1<-DACTest(forecast_results_shrinkTVP1step,EUA_test_data$EUA_xts, test = c("PT"),conf.level = 0.95)
+DAC_shrinkSV1<-DACTest(forecast_results_shrinkTVP1stepSV,EUA_test_data$EUA_xts, test = c("PT"),conf.level = 0.95)
+DAC_LSTM1<-DACTest(forecast_results_LSTM1step,EUA_test_data$EUA_xts[1:103], test = c("PT"),conf.level = 0.95)
+
+# 4 step
+DAC_LM4<-DACTest(forecast_results_LM4step,EUA_test_data$EUA_xts[1:104], test = c("PT"),conf.level = 0.95)
+DAC_shrink4<-DACTest(forecast_results_shrinkTVP4step,EUA_test_data$EUA_xts[1:104], test = c("PT"),conf.level = 0.95)
+DAC_shrinkSV4<-DACTest(forecast_results_shrinkTVP4stepSV,EUA_test_data$EUA_xts[1:104], test = c("PT"),conf.level = 0.95)
+DAC_LSTM4<-DACTest(forecast_results_LSTM4step,EUA_test_data$EUA_xts[1:100], test = c("PT"),conf.level = 0.95)
+
+# Reject HO = if we can reject the null hypothesis then we can state with 1–α confidence that the forecast accurately predicts the sign of yi.
+```
+
+```{r}
+# Statistical tests - Level Accuracy
+
+### 1 step
+# LM vs shrinkTVP
+LMvsShrink1step<-dm.test(comparison_pred_real_LM_1step$RMSE,comparison_pred_real_shrinkTVP_1step$RMSE,alternative=c("two.sided"),h=1,power=1)
+# LM vs shrinkTVPwithSV
+LMvsShrinkSV1step<-dm.test(comparison_pred_real_LM_1step$RMSE,comparison_pred_real_shrinkTVP_1stepSV$RMSE,alternative=c("two.sided"),h=1,power=1)
+# LM vs LSTM
+LMvsLSTM1step<-dm.test(comparison_pred_real_LM_1step$RMSE,comparison_pred_real_LSTM_1step$RMSE,alternative=c("two.sided"),h=1,power=1)
+# shrinkTVP vs shrinkTVPwithSV
+ShrinkvsShrinkSV1step<-dm.test(comparison_pred_real_shrinkTVP_1step$RMSE,comparison_pred_real_shrinkTVP_1stepSV$RMSE,alternative=c("two.sided"),h=1,power=1)
+# shrinkTVP vs LSTM
+ShrinkvsLSTM1step<-dm.test(comparison_pred_real_shrinkTVP_1step$RMSE,comparison_pred_real_LSTM_1step$RMSE,alternative=c("two.sided"),h=1,power=1)
+# shrinkTVPwithSV vs LSTM
+ShrinkSVvsLSTM1step<-dm.test(comparison_pred_real_shrinkTVP_1stepSV$RMSE,comparison_pred_real_LSTM_1step$RMSE,alternative=c("two.sided"),h=1,power=1)
+
+### 4 step
+# LM vs ShrinkTVP
+LMvsShrink4step<-dm.test(comparison_pred_real_LM_4step$RMSE,comparison_pred_real_shrinkTVP_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+# LM vs shrinkTVPwithSV
+LMvsShrinkSV4step<-dm.test(comparison_pred_real_LM_4step$RMSE,comparison_pred_real_shrinkTVP_4stepSV$RMSE,alternative=c("two.sided"),h=1,power=1)
+# LM vs LSTM
+LMvsLSTM4step<-dm.test(comparison_pred_real_LM_4step$RMSE,comparison_pred_real_LSTM_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+# shrinkTVP vs shrinkTVPwithSV
+ShrinkvsShrinkSV4step<-dm.test(comparison_pred_real_shrinkTVP_4step$RMSE,comparison_pred_real_shrinkTVP_4stepSV$RMSE,alternative=c("two.sided"),h=1,power=1)
+# shrinkTVP vs LSTM
+ShrinkvsLSTM4step<-dm.test(comparison_pred_real_shrinkTVP_4step$RMSE,comparison_pred_real_LSTM_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+
+# shrinkTVPwithSV vs LSTM
+ShrinkSVvsLSTM4step<-dm.test(comparison_pred_real_shrinkTVP_4stepSV$RMSE,comparison_pred_real_LSTM_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+
+
+# 1 step vs 4 step forecast with the same model
+dm.test(comparison_pred_real_LM_1step$RMSE,comparison_pred_real_LM_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+dm.test(comparison_pred_real_shrinkTVP_1step$RMSE,comparison_pred_real_shrinkTVP_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+dm.test(comparison_pred_real_shrinkTVP_1stepSV$RMSE,comparison_pred_real_shrinkTVP_4stepSV$RMSE,alternative=c("two.sided"),h=1,power=1)
+dm.test(comparison_pred_real_LSTM_1step$RMSE,comparison_pred_real_LSTM_4step$RMSE,alternative=c("two.sided"),h=1,power=1)
+```
+
+```{r}
+### Create Tables
+
+#Table with 1 step Directional Accuracy Results
+Final_Directional_Accuracy_1step<-rbind(DAC_LM1,DAC_shrink1,DAC_shrinkSV1,DAC_LSTM1)
+out1<-Final_Directional_Accuracy_1step[,c(2,3,4,5,6)]
+
+#Table with 4 step Directional Accuracy Results
+Final_Directional_Accuracy_4step<-rbind(DAC_LM4,DAC_shrink4,DAC_shrinkSV4,DAC_LSTM4)
+out2<-Final_Directional_Accuracy_4step[,c(2,3,4,5,6)]
+library(huxtable)
+install.packages("flextable")
+library(officer)
+library(flextable)
+quick_docx(out2)
+```
+
+
+```{r}
+
+#Table with 1 step Level Accuracy Results
+Final_Level_Accuracy_1step<-rbind(LMvsShrink1step,LMvsShrinkSV1step,LMvsLSTM1step,ShrinkvsLSTM1step,ShrinkvsShrinkSV1step,ShrinkSVvsLSTM1step)
+Final_Level_Accuracy_1step
+
+#Table with 4 step Level Accuracy Results
+Final_Level_Accuracy_4step<-rbind(LMvsShrink4step,LMvsShrinkSV4step,LMvsLSTM4step,ShrinkvsLSTM4step,ShrinkvsShrinkSV4step,ShrinkSVvsLSTM4step)
+Final_Level_Accuracy_4step
+```
+
+```{r}
+### Final Visualizations to analyze
+## 1 step
+par(mfrow=c(2,1))
+plot(comparison_pred_real_LM_1step,legend.loc="bottomright")
+plot(comparison_pred_real_shrinkTVP_1step,legend.loc="bottomright")
+plot(comparison_pred_real_shrinkTVP_1stepSV,legend.loc="bottomright")
+plot(comparison_pred_real_LSTM_1step,legend.loc="bottomright")
+```
+
+```{r}
+## 4 step
+par(mfrow=c(2,1))
+plot(comparison_pred_real_LM_4step,legend.loc="bottomright")
+plot(comparison_pred_real_shrinkTVP_4step,legend.loc="bottomright")
+plot(comparison_pred_real_shrinkTVP_4stepSV,legend.loc="bottomright")
+plot(comparison_pred_real_LSTM_4step,legend.loc="bottomright")
+
+```
+
+```{r}
+# Beautiful visualization for 1 step
+# LM
+visualize<-na.omit(comparison_pred_real_LM_1step)
+index_all<-index(comparison_pred_real_LM_1step)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "Multiple Linear Regression - 1 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=LM_Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("LM1step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# shrinkTVP
+visualize<-na.omit(comparison_pred_real_shrinkTVP_1step)
+index_all<-index(comparison_pred_real_shrinkTVP_1step)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "shrinkTVP - 1 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=shrinkTVP.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("shrinkTVP1step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# shrinkTVPwithSV
+visualize<-na.omit(comparison_pred_real_shrinkTVP_1stepSV)
+index_all<-index(comparison_pred_real_shrinkTVP_1stepSV)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "shrinkTVP with SV - 1 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=shrinkTVP.with.SV.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("shrinkTVPwithSV1step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# LSTM
+visualize<-na.omit(comparison_pred_real_LSTM_1step)
+index_all<-index(comparison_pred_real_LSTM_1step)
+
+Date<-as.Date(index_all[1:103],origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "Long Short Term Memory Model - 1 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=LSTM.1step.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("LSTM1step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# Beautiful visualization for 4 step
+# LM
+visualize<-na.omit(comparison_pred_real_LM_4step)
+index_all<-index(comparison_pred_real_LM_4step)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "Multiple Linear Regression - 4 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=LM.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("LM4step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# shrinkTVP
+visualize<-na.omit(comparison_pred_real_shrinkTVP_4step)
+index_all<-index(comparison_pred_real_shrinkTVP_4step)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "shrinkTVP - 4 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=shrinkTVP.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("shrinkTVP4step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# shrinkTVPwithSV
+visualize<-na.omit(comparison_pred_real_shrinkTVP_4stepSV)
+index_all<-index(comparison_pred_real_shrinkTVP_4stepSV)
+Date<-as.Date(index_all,origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "shrinkTVP with SV - 4 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=shrinkTVP.with.SV.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("shrinkTVPwithSV4step_final.png",width = 12, height = 4)
+
+```
+
+```{r}
+# LSTM
+visualize<-na.omit(comparison_pred_real_LSTM_4step)
+index_all<-index(comparison_pred_real_LSTM_4step)
+Date<-as.Date(index_all[1:100],origin="2013-01-01")
+ggplot(visualize, aes(x=Date)) +labs(title = "Long Short Term Memory Model - 4 step") + scale_y_continuous(n.breaks=10) + scale_x_date(date_breaks = "2 month",date_labels = "%Y/%m") + theme_bw() + ylab("Returns / Forecast Error") + xlab("Date") + labs(color="Legend")  + geom_line(aes(y=LSTM.4step.Prediction,color="Prediction")) +geom_line(aes(y=RMSE,color="RMSE"),linetype="longdash")+geom_line(aes(y=Reality,color="Reality")) +scale_color_manual(name = "Legend", values = c("Prediction" = "red", "RMSE" = "blue","Reality"="black")) #+ geom_line(aes(y=oil_xts,color="Oil")) + geom_line(aes(y=gas_xts,color="Natural Gas")) + geom_line(aes(y=coal_xts,color="Coal")) + geom_line(aes(y=Temp_xts, color="Avg Temperature")) + geom_line(aes(y=EUA_xts,color = "EUA"),size=1.2) #+geom_line(aes(y=DAX_xts,color="DAX")) + geom_line(aes(y=BE500_xts,color="BE500"))
+
+ggsave("LSTM4step_final.png",width = 12, height = 4)
+
+```
+
